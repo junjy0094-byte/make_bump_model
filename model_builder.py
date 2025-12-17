@@ -134,16 +134,34 @@ class BumpModelBuilder:
         self.mapdl.rectng(0, sub_lx, 0, sub_ly)
         print(f"  Created substrate area: {sub_lx} x {sub_ly} mm")
 
+        # DEBUG: Check areas after first rectng
+        self.mapdl.allsel()
+        area_count_1 = len(self.mapdl.geometry.anum)
+        print(f"  DEBUG: Areas after substrate rectng: {area_count_1}")
+        print(f"  DEBUG: Area numbers: {self.mapdl.geometry.anum}")
+
         # Create chip region area (to be used for slicing)
         self.mapdl.rectng(self.chip_x_min, self.chip_x_max,
                          self.chip_y_min, self.chip_y_max)
         print(f"  Created chip region: [{self.chip_x_min}, {self.chip_x_max}] x "
               f"[{self.chip_y_min}, {self.chip_y_max}] mm")
 
+        # DEBUG: Check areas after second rectng
+        self.mapdl.allsel()
+        area_count_2 = len(self.mapdl.geometry.anum)
+        print(f"  DEBUG: Areas after chip rectng: {area_count_2}")
+        print(f"  DEBUG: Area numbers: {self.mapdl.geometry.anum}")
+
         # Overlap/slice the areas to create shared boundaries
         self.mapdl.allsel()
         self.mapdl.aovlap("ALL")
         print("  Areas overlapped - chip region boundaries created")
+
+        # DEBUG: Check areas after aovlap
+        self.mapdl.allsel()
+        area_count_3 = len(self.mapdl.geometry.anum)
+        print(f"  DEBUG: Areas after aovlap: {area_count_3}")
+        print(f"  DEBUG: Area numbers: {self.mapdl.geometry.anum}")
 
         # Get resulting areas
         self.mapdl.allsel()
@@ -156,23 +174,52 @@ class BumpModelBuilder:
 
         self.mapdl.allsel()
 
+        # DEBUG: Check selected areas before meshing
+        self.mapdl.asel("ALL")
+        selected_areas = self.mapdl.geometry.anum
+        print(f"  DEBUG: Selected areas for meshing: {selected_areas}")
+        print(f"  DEBUG: Number of areas: {len(selected_areas)}")
+
         # Set element type to 2D mesh seeding element
         self.mapdl.type(1)
+        print(f"  DEBUG: Element type set to 1 (MESH200)")
+
+        # Associate element type with areas using AATT
+        self.mapdl.aatt("", "", 1)  # AATT, MAT, REAL, TYPE
+        print(f"  DEBUG: AATT set for areas (TYPE=1)")
 
         # Set element size
         self.mapdl.esize(elem_size)
         print(f"  Element size: {elem_size} mm")
 
-        # Set mapped mesh
+        # Set mesh shape - try free mesh first (more robust)
         self.mapdl.mshape(0, "2D")  # Quad elements
-        self.mapdl.mshkey(1)  # Mapped mesh
+        self.mapdl.mshkey(0)  # Free mesh (0) instead of mapped (1)
+        print(f"  DEBUG: mshape=0 (quad), mshkey=0 (free mesh)")
 
         # Mesh all areas
-        self.mapdl.amesh("ALL")
+        print(f"  DEBUG: Calling amesh('ALL')...")
+        try:
+            result = self.mapdl.amesh("ALL")
+            print(f"  DEBUG: amesh result: {result}")
+        except Exception as e:
+            print(f"  DEBUG: amesh error: {e}")
 
         num_elements = self.mapdl.mesh.n_elem
         num_nodes = self.mapdl.mesh.n_node
         print(f"  2D mesh generated: {num_elements} elements, {num_nodes} nodes")
+
+        # DEBUG: If still 0, try individual area meshing
+        if num_elements == 0 and len(selected_areas) > 0:
+            print(f"  DEBUG: Trying to mesh areas individually...")
+            for area_num in selected_areas:
+                self.mapdl.asel("S", "AREA", "", area_num)
+                try:
+                    self.mapdl.amesh(area_num)
+                    n_elem = self.mapdl.mesh.n_elem
+                    print(f"  DEBUG: Area {area_num} - elements: {n_elem}")
+                except Exception as e:
+                    print(f"  DEBUG: Area {area_num} mesh error: {e}")
 
     def extrude_substrate_layers(self):
         """Extrude substrate layers from base mesh"""
