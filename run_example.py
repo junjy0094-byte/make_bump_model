@@ -1,24 +1,21 @@
 """
 Example script to run the Substrate + Bump + Chip model builder
 
-New Algorithm (Bottom-up Extrusion):
-1. Create base area with chip region sliced
-2. Mesh base area (2D mapped mesh)
-3. Extrude substrate layers
-4. Extrude bump layer (chip area only)
-5. Extrude chip
-6. Merge nodes
-7. Assign bump/air materials by element location
+Algorithm (Area Extrusion + Volume Meshing):
+1. Create base areas with keypoints (chip region + surrounding)
+2. Extrude areas into volumes (VOFFST)
+3. Mesh volumes (VMESH)
+4. Assign materials by z-location
+5. Assign bump materials by x,y location
 """
 
 from model_builder import BumpModelBuilder
 import config
 
 
-def run_with_default_config():
-    """Run model with default configuration from config.py"""
+def run_default():
+    """Run with default configuration"""
     print("Running with default configuration...")
-    print("Using bottom-up extrusion approach")
 
     builder = BumpModelBuilder()
 
@@ -32,92 +29,73 @@ def run_with_default_config():
 
 
 def run_step_by_step():
-    """Run model building step by step for debugging"""
-    print("Running step-by-step model building...")
+    """Run step by step for debugging"""
+    print("Running step-by-step...")
 
     builder = BumpModelBuilder()
 
     try:
-        # Step 1: Initialize
         builder.clear_model()
-        print("\n[Step 1] Model cleared")
+        print("\n[1] Model cleared")
 
-        # Step 2: Load bump coordinates
         builder.load_bump_coordinates("bump_coordinates.txt")
-        print(f"\n[Step 2] Loaded {len(builder.bump_coordinates)} bump coordinates")
+        print(f"\n[2] Loaded {len(builder.bump_coordinates)} bumps")
 
-        # Step 3: Define materials
         builder.define_materials()
-        print(f"\n[Step 3] Materials defined")
+        print("\n[3] Materials defined")
 
-        # Step 4: Set element types
         builder.set_element_type()
-        print("\n[Step 4] Element types set (MESH200 + SOLID185)")
+        print("\n[4] Element type set")
 
-        # Step 5: Create base area with chip region
-        builder.create_base_area_with_chip_region()
-        print("\n[Step 5] Base area created with chip region sliced")
+        builder.create_base_areas()
+        print("\n[5] Base areas created")
 
-        # Step 6: Mesh base area (2D)
-        builder.mesh_base_area()
-        print("\n[Step 6] 2D base mesh generated")
-
-        # Step 7: Extrude substrate layers
         builder.extrude_substrate_layers()
-        print(f"\n[Step 7] Substrate extruded, top z = {builder.substrate_top_z:.4f} mm")
+        print(f"\n[6] Substrate extruded, z={builder.substrate_top_z:.4f}")
 
-        # Step 8: Extrude bump layer
         builder.extrude_bump_layer()
-        print(f"\n[Step 8] Bump layer extruded, top z = {builder.bump_layer_top_z:.4f} mm")
+        print(f"\n[7] Bump layer extruded, z={builder.bump_layer_top_z:.4f}")
 
-        # Step 9: Extrude chip
         builder.extrude_chip()
-        print("\n[Step 9] Chip extruded")
+        print("\n[8] Chip extruded")
 
-        # Step 10: Cleanup 2D elements
-        builder.cleanup_2d_elements()
-        print("\n[Step 10] 2D elements cleaned up")
+        mesh_ok = builder.mesh_all_volumes()
+        print(f"\n[9] Mesh: {'OK' if mesh_ok else 'FAILED'}")
 
-        # Step 11: Merge nodes
-        builder.merge_nodes()
-        print("\n[Step 11] Nodes merged")
+        if mesh_ok:
+            builder.merge_nodes()
+            print("\n[10] Nodes merged")
 
-        # Step 12: Assign bump materials
-        builder.assign_bump_materials()
-        print("\n[Step 12] Bump/Air materials assigned")
+            builder.assign_materials_by_location()
+            print("\n[11] Materials assigned by z-location")
 
-        # Step 13: Save model
-        builder.save_model("step_by_step_model")
-        print("\n[Step 13] Model saved (.db and .cdb)")
+            builder.assign_bump_materials()
+            print("\n[12] Bump materials assigned")
 
-        # Print summary
+            builder.save_model("step_model")
+            print("\n[13] Model saved")
+
         builder.get_model_summary()
 
     finally:
         builder.close()
 
 
-def show_pcb_stackup():
-    """Display the PCB stackup configuration"""
-    print("=" * 60)
-    print("PCB STACKUP CONFIGURATION")
-    print("=" * 60)
+def show_stackup():
+    """Show PCB stackup"""
+    print("=" * 50)
+    print("PCB STACKUP")
+    print("=" * 50)
 
-    total_thickness = 0
+    total = 0
     for i, layer in enumerate(config.SUBSTRATE["layers"]):
-        print(f"{i+1}. {layer['name']:15s} : {layer['thickness']:.4f} mm ({layer['material']})")
-        total_thickness += layer["thickness"]
+        print(f"{i+1}. {layer['name']:12s}: {layer['thickness']:.4f} mm ({layer['material']})")
+        total += layer["thickness"]
 
-    print("-" * 60)
-    print(f"   Total substrate thickness: {total_thickness:.4f} mm")
-    print(f"   Substrate size: {config.SUBSTRATE['length_x']} x {config.SUBSTRATE['length_y']} mm")
-    print()
-    print(f"Bump layer height: {config.BUMP['height']} mm")
-    print(f"Bump size: {config.BUMP['width_x']} x {config.BUMP['width_y']} mm")
-    print()
-    print(f"Chip size: {config.CHIP['length_x']} x {config.CHIP['length_y']} x {config.CHIP['thickness']} mm")
-    print(f"Chip offset: ({config.CHIP['offset_x']}, {config.CHIP['offset_y']}) mm")
-    print("=" * 60)
+    print("-" * 50)
+    print(f"Total: {total:.4f} mm")
+    print(f"Bump: {config.BUMP['height']} mm")
+    print(f"Chip: {config.CHIP['thickness']} mm")
 
 
 if __name__ == "__main__":
@@ -126,12 +104,11 @@ if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "default"
 
     if mode == "default":
-        run_with_default_config()
+        run_default()
     elif mode == "step":
         run_step_by_step()
     elif mode == "stackup":
-        show_pcb_stackup()
+        show_stackup()
     else:
-        print(f"Unknown mode: {mode}")
-        print("Available modes: default, step, stackup")
-        sys.exit(1)
+        print(f"Unknown: {mode}")
+        print("Modes: default, step, stackup")
