@@ -105,33 +105,29 @@ def run_step_by_step():
         builder.set_element_type()
         print("\n[Step 4] Element type set")
 
-        # Step 5: Create substrate
+        # Step 5: Create substrate (materials assigned during creation)
         builder.create_substrate()
-        print(f"\n[Step 5] Substrate created, top z = {builder.substrate_top_z}")
+        print(f"\n[Step 5] Substrate created with materials, top z = {builder.substrate_top_z}")
 
-        # Step 6: Create bumps
+        # Step 6: Create bumps (materials assigned during creation)
         builder.create_bumps()
-        print(f"\n[Step 6] Bumps created, count = {len(builder.volume_ids['bump'])}")
+        print(f"\n[Step 6] Bumps created with materials, count = {len(builder.volume_ids['bump'])}")
 
-        # Step 7: Create chip
+        # Step 7: Create chip (materials assigned during creation)
         builder.create_chip()
-        print("\n[Step 7] Chip created")
+        print("\n[Step 7] Chip created with materials")
 
         # Step 8: Glue volumes
         builder.glue_volumes()
         print("\n[Step 8] Volumes glued")
 
-        # Step 9: Assign materials
-        builder.assign_materials_to_volumes()
-        print("\n[Step 9] Materials assigned to volumes")
-
-        # Step 10: Mesh
+        # Step 9: Mesh
         builder.mesh_model()
-        print("\n[Step 10] Mesh generated")
+        print("\n[Step 9] Mesh generated")
 
-        # Step 11: Save
+        # Step 10: Save (both .db and .cdb files)
         builder.save_model("step_by_step_model")
-        print("\n[Step 11] Model saved")
+        print("\n[Step 10] Model saved (.db and .cdb)")
 
         # Print summary
         builder.get_model_summary()

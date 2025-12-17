@@ -169,20 +169,27 @@ class BumpModelBuilder:
             self.mapdl.block(0, lx, 0, ly, z_bottom, z_top)
             vol_num = self.mapdl.geometry.vnum[-1]  # Get the last created volume number
 
+            # Assign material attribute immediately after creation (before vglue)
+            mat_id = self.material_ids[layer["material"]["name"]]
+            self.mapdl.vsel("S", "VOLU", "", vol_num)
+            self.mapdl.vatt(mat_id, "", 1)  # mat_id, real, element type
+
             self.volume_ids["substrate"].append({
                 "volume": vol_num,
                 "layer_name": layer["name"],
                 "material": layer["material"]["name"],
+                "mat_id": mat_id,
                 "z_bottom": z_bottom,
                 "z_top": z_top
             })
 
-            print(f"  Layer '{layer['name']}': Volume {vol_num}, "
+            print(f"  Layer '{layer['name']}': Volume {vol_num}, Mat ID {mat_id}, "
                   f"z=[{z_bottom:.4f}, {z_top:.4f}] mm, thickness={thickness} mm")
 
             self.current_z = z_top
 
         self.substrate_top_z = self.current_z
+        self.mapdl.allsel()
         print(f"Substrate top z: {self.substrate_top_z} mm")
 
     def create_bumps(self):
@@ -196,10 +203,12 @@ class BumpModelBuilder:
         diameter = BUMP["diameter"]
         radius = diameter / 2.0
         height = BUMP["height"]
+        bump_mat_id = self.material_ids[BUMP["material"]["name"]]
 
         z_bottom = self.substrate_top_z
         z_top = z_bottom + height
 
+        created_count = 0
         for i, (x, y) in enumerate(self.bump_coordinates):
             # Check if bump is within chip area (bumps should be under the chip)
             chip_x_min = CHIP["offset_x"]
@@ -220,18 +229,25 @@ class BumpModelBuilder:
 
             vol_num = self.mapdl.geometry.vnum[-1]
 
+            # Assign material attribute immediately after creation (before vglue)
+            self.mapdl.vsel("S", "VOLU", "", vol_num)
+            self.mapdl.vatt(bump_mat_id, "", 1)  # mat_id, real, element type
+
             self.volume_ids["bump"].append({
                 "volume": vol_num,
                 "x": x,
                 "y": y,
+                "mat_id": bump_mat_id,
                 "z_bottom": z_bottom,
                 "z_top": z_top
             })
 
-            if (i + 1) % 10 == 0 or i == len(self.bump_coordinates) - 1:
-                print(f"  Created {i + 1}/{len(self.bump_coordinates)} bumps")
+            created_count += 1
+            if created_count % 10 == 0 or i == len(self.bump_coordinates) - 1:
+                print(f"  Created {created_count} bumps (processing {i + 1}/{len(self.bump_coordinates)})")
 
         self.bump_top_z = z_top
+        self.mapdl.allsel()
         print(f"Total bumps created: {len(self.volume_ids['bump'])}")
         print(f"Bump top z: {self.bump_top_z} mm")
 
@@ -244,6 +260,7 @@ class BumpModelBuilder:
         thickness = CHIP["thickness"]
         offset_x = CHIP["offset_x"]
         offset_y = CHIP["offset_y"]
+        chip_mat_id = self.material_ids[CHIP["material"]["name"]]
 
         z_bottom = self.bump_top_z
         z_top = z_bottom + thickness
@@ -257,13 +274,19 @@ class BumpModelBuilder:
 
         vol_num = self.mapdl.geometry.vnum[-1]
 
+        # Assign material attribute immediately after creation (before vglue)
+        self.mapdl.vsel("S", "VOLU", "", vol_num)
+        self.mapdl.vatt(chip_mat_id, "", 1)  # mat_id, real, element type
+
         self.volume_ids["chip"].append({
             "volume": vol_num,
+            "mat_id": chip_mat_id,
             "z_bottom": z_bottom,
             "z_top": z_top
         })
 
-        print(f"  Chip: Volume {vol_num}")
+        self.mapdl.allsel()
+        print(f"  Chip: Volume {vol_num}, Mat ID {chip_mat_id}")
         print(f"  Position: x=[{offset_x}, {offset_x + lx}], "
               f"y=[{offset_y}, {offset_y + ly}], "
               f"z=[{z_bottom:.4f}, {z_top:.4f}] mm")
@@ -281,32 +304,6 @@ class BumpModelBuilder:
 
         print("All volumes glued together")
 
-    def assign_materials_to_volumes(self):
-        """Assign material properties to each volume"""
-        print("\n--- Assigning Materials to Volumes ---")
-
-        # Substrate layers
-        for vol_info in self.volume_ids["substrate"]:
-            mat_id = self.material_ids[vol_info["material"]]
-            self.mapdl.vsel("S", "VOLU", "", vol_info["volume"])
-            self.mapdl.vatt(mat_id)
-            print(f"  Substrate layer '{vol_info['layer_name']}': Material ID {mat_id}")
-
-        # Bumps
-        bump_mat_id = self.material_ids[BUMP["material"]["name"]]
-        for vol_info in self.volume_ids["bump"]:
-            self.mapdl.vsel("S", "VOLU", "", vol_info["volume"])
-            self.mapdl.vatt(bump_mat_id)
-        print(f"  Bumps: Material ID {bump_mat_id}")
-
-        # Chip
-        chip_mat_id = self.material_ids[CHIP["material"]["name"]]
-        for vol_info in self.volume_ids["chip"]:
-            self.mapdl.vsel("S", "VOLU", "", vol_info["volume"])
-            self.mapdl.vatt(chip_mat_id)
-        print(f"  Chip: Material ID {chip_mat_id}")
-
-        self.mapdl.allsel()
 
     def set_element_type(self):
         """Set element type for meshing"""
@@ -354,11 +351,21 @@ class BumpModelBuilder:
         print(f"Mesh generated: {num_elements} elements, {num_nodes} nodes")
 
     def save_model(self, filename="bump_model"):
-        """Save the model database"""
+        """Save the model database (.db) and CDB file (.cdb)"""
         print(f"\n--- Saving Model as '{filename}' ---")
 
+        # Save MAPDL database (.db)
         self.mapdl.save(filename)
-        print(f"Model saved to: {os.path.join(self.working_dir, filename + '.db')}")
+        db_path = os.path.join(self.working_dir, filename + '.db')
+        print(f"Model database saved to: {db_path}")
+
+        # Save CDB file (ANSYS archive file with geometry and mesh)
+        cdb_path = os.path.join(self.working_dir, filename + '.cdb')
+        self.mapdl.allsel()  # Ensure all entities are selected
+        self.mapdl.cdwrite("ALL", filename, "cdb")
+        print(f"CDB file saved to: {cdb_path}")
+
+        return db_path, cdb_path
 
     def plot_model(self, show_mesh=False):
         """Plot the model geometry"""
@@ -439,16 +446,13 @@ class BumpModelBuilder:
         # Set element type
         self.set_element_type()
 
-        # Create geometry
+        # Create geometry (materials are assigned during volume creation)
         self.create_substrate()
         self.create_bumps()
         self.create_chip()
 
-        # Glue volumes
+        # Glue volumes (after material assignment to preserve attributes)
         self.glue_volumes()
-
-        # Assign materials
-        self.assign_materials_to_volumes()
 
         # Mesh if requested
         if mesh:
