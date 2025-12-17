@@ -1,54 +1,108 @@
 """
 Configuration file for Substrate + Bump layer + Chip model
 All dimensions in mm, material properties in SI units (MPa for modulus, etc.)
+
+PCB Stackup (bottom to top):
+  SR (bottom) - Cu - Prepreg - Cu - Core - Cu - Prepreg - Cu - SR (top)
 """
 
 # =============================================================================
-# Substrate Configuration
+# Material Definitions
+# =============================================================================
+MATERIALS = {
+    "FR4_Core": {
+        "name": "FR4_Core",
+        "E": 22000,        # Young's modulus (MPa)
+        "nu": 0.28,        # Poisson's ratio
+        "density": 1.85e-9,  # kg/mm^3
+        "CTE": 14e-6,      # Coefficient of thermal expansion (1/K)
+    },
+    "FR4_Prepreg": {
+        "name": "FR4_Prepreg",
+        "E": 20000,        # Young's modulus (MPa)
+        "nu": 0.28,
+        "density": 1.80e-9,
+        "CTE": 15e-6,
+    },
+    "Copper": {
+        "name": "Copper",
+        "E": 110000,       # Young's modulus (MPa)
+        "nu": 0.34,
+        "density": 8.96e-9,
+        "CTE": 17e-6,
+    },
+    "Solder_Resist": {
+        "name": "Solder_Resist",
+        "E": 3500,         # Young's modulus (MPa)
+        "nu": 0.35,
+        "density": 1.4e-9,
+        "CTE": 30e-6,
+    },
+    "SAC305": {
+        "name": "SAC305",  # Solder bump material
+        "E": 40000,        # Young's modulus (MPa)
+        "nu": 0.36,
+        "density": 7.4e-9,
+        "CTE": 22e-6,
+    },
+    "Silicon": {
+        "name": "Silicon",
+        "E": 130000,       # Young's modulus (MPa)
+        "nu": 0.28,
+        "density": 2.33e-9,
+        "CTE": 2.6e-6,
+    },
+    "Air": {
+        "name": "Air",
+        "E": 0.001,        # Very low stiffness (MPa)
+        "nu": 0.0,
+        "density": 1.2e-12,  # kg/mm^3
+        "CTE": 0.0,
+    },
+}
+
+# =============================================================================
+# Substrate Configuration (PCB Stackup: bottom to top)
+# SR - Cu - Prepreg - Cu - Core - Cu - Prepreg - Cu - SR
 # =============================================================================
 SUBSTRATE = {
     "layers": [
-        {
-            "name": "substrate_core",
-            "thickness": 0.4,  # mm
-            "material": {
-                "name": "FR4",
-                "E": 22000,      # Young's modulus (MPa)
-                "nu": 0.28,     # Poisson's ratio
-                "density": 1.85e-9,  # kg/mm^3 (1850 kg/m^3)
-                "CTE": 14e-6,   # Coefficient of thermal expansion (1/K)
-            }
-        },
-        {
-            "name": "substrate_metal",
-            "thickness": 0.035,  # mm (35um copper layer)
-            "material": {
-                "name": "Copper",
-                "E": 110000,     # Young's modulus (MPa)
-                "nu": 0.34,
-                "density": 8.96e-9,  # kg/mm^3
-                "CTE": 17e-6,
-            }
-        },
+        # Bottom solder resist
+        {"name": "SR_bottom", "thickness": 0.02, "material": "Solder_Resist"},
+        # Bottom copper
+        {"name": "Cu_L1", "thickness": 0.035, "material": "Copper"},
+        # Prepreg
+        {"name": "Prepreg_1", "thickness": 0.1, "material": "FR4_Prepreg"},
+        # Inner copper layer 1
+        {"name": "Cu_L2", "thickness": 0.035, "material": "Copper"},
+        # Core
+        {"name": "Core", "thickness": 0.4, "material": "FR4_Core"},
+        # Inner copper layer 2
+        {"name": "Cu_L3", "thickness": 0.035, "material": "Copper"},
+        # Prepreg
+        {"name": "Prepreg_2", "thickness": 0.1, "material": "FR4_Prepreg"},
+        # Top copper
+        {"name": "Cu_L4", "thickness": 0.035, "material": "Copper"},
+        # Top solder resist
+        {"name": "SR_top", "thickness": 0.02, "material": "Solder_Resist"},
     ],
     "length_x": 10.0,  # mm
     "length_y": 10.0,  # mm
 }
 
 # =============================================================================
-# Bump Configuration
+# Bump Layer Configuration
+# - Bump layer is a uniform layer under the chip
+# - Elements at bump coordinates get bump material
+# - Remaining elements get air material
 # =============================================================================
 BUMP = {
-    "diameter": 0.1,    # mm (100um)
-    "height": 0.05,     # mm (50um)
-    "material": {
-        "name": "SAC305",  # Solder alloy
-        "E": 40000,        # Young's modulus (MPa)
-        "nu": 0.36,
-        "density": 7.4e-9,  # kg/mm^3
-        "CTE": 22e-6,
-    },
-    "coordinate_file": "bump_coordinates.txt",  # Path to bump coordinates
+    "width_x": 0.1,     # mm (bump width in x direction)
+    "width_y": 0.1,     # mm (bump width in y direction)
+    "height": 0.05,     # mm (50um bump height)
+    "material": "SAC305",
+    "air_material": "Air",
+    "coordinate_file": "bump_coordinates.txt",  # Path to bump coordinates (x, y centers)
 }
 
 # =============================================================================
@@ -60,36 +114,24 @@ CHIP = {
     "thickness": 0.3,   # mm
     "offset_x": 1.0,    # mm (offset from substrate corner)
     "offset_y": 1.0,    # mm
-    "material": {
-        "name": "Silicon",
-        "E": 130000,       # Young's modulus (MPa)
-        "nu": 0.28,
-        "density": 2.33e-9,  # kg/mm^3
-        "CTE": 2.6e-6,
-    }
+    "material": "Silicon",
 }
 
 # =============================================================================
-# Underfill Configuration (optional - fills space between bumps)
-# =============================================================================
-UNDERFILL = {
-    "enabled": False,  # Set to True if underfill is needed
-    "material": {
-        "name": "Underfill_Epoxy",
-        "E": 8000,        # Young's modulus (MPa)
-        "nu": 0.35,
-        "density": 1.2e-9,  # kg/mm^3
-        "CTE": 30e-6,
-    }
-}
-
-# =============================================================================
-# Mesh Configuration
+# Mesh Configuration (Mapped Mesh)
 # =============================================================================
 MESH = {
-    "element_size": 0.2,  # mm (global element size)
-    "bump_refinement": 0.02,  # mm (element size around bumps)
-    "element_type": "SOLID186",  # 20-node hexahedral element
+    # Number of divisions for mapped mesh
+    "substrate_div_x": 50,      # divisions in x direction for substrate
+    "substrate_div_y": 50,      # divisions in y direction for substrate
+    "bump_layer_div_x": 80,     # divisions in x direction for bump layer (under chip)
+    "bump_layer_div_y": 80,     # divisions in y direction for bump layer
+    "bump_layer_div_z": 2,      # divisions in z direction for bump layer
+    "chip_div_x": 40,           # divisions in x direction for chip
+    "chip_div_y": 40,           # divisions in y direction for chip
+    "chip_div_z": 6,            # divisions in z direction for chip
+    "layer_div_z": 2,           # divisions in z direction per substrate layer
+    "element_type": "SOLID185",  # 8-node hexahedral for mapped mesh
 }
 
 # =============================================================================
