@@ -45,6 +45,9 @@ class BumpModelBuilder:
         else:
             self.mapdl = mapdl
 
+        # Ignore non-critical MAPDL warnings/errors
+        self.mapdl.ignore_errors = True
+
         self.bump_coordinates = []
         self.material_ids = {}
         self.volume_ids = {
