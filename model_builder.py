@@ -1,13 +1,13 @@
 """
 PyAnsys Model Builder for Substrate + Bump layer + Chip Structure
-Uses ansys-mapdl-core (PyMAPDL) for geometry creation and mapped meshing
+Uses bottom-up extrusion approach for robust mapped mesh generation
 
 Algorithm:
-1. Create substrate layers (PCB stackup) with mapped mesh
-2. Create uniform bump layer under chip area
-3. Create chip with mapped mesh
-4. After meshing, assign bump material to elements at bump coordinates
-5. Assign air material to remaining elements in bump layer
+1. Create bottom area and slice for chip region
+2. Generate 2D mesh on bottom area
+3. Extrude mesh upward layer by layer (substrate -> bump layer -> chip)
+4. Assign materials to elements based on location
+5. Merge nodes for connectivity
 
 Author: Auto-generated
 """
@@ -24,19 +24,12 @@ from config import SUBSTRATE, BUMP, CHIP, MESH, MATERIALS
 class BumpModelBuilder:
     """
     Class to build a Substrate + Bump layer + Chip model using PyMAPDL
-    with mapped mesh and element-based material assignment for bumps
+    with bottom-up extrusion for mapped mesh generation
     """
 
     def __init__(self, mapdl=None, working_dir=None):
         """
         Initialize the model builder
-
-        Parameters
-        ----------
-        mapdl : ansys.mapdl.core.Mapdl, optional
-            Existing MAPDL instance. If None, a new one will be launched.
-        working_dir : str, optional
-            Working directory for MAPDL files
         """
         self.working_dir = working_dir or os.path.join(os.getcwd(), "mapdl_files")
         os.makedirs(self.working_dir, exist_ok=True)
@@ -55,16 +48,17 @@ class BumpModelBuilder:
 
         self.bump_coordinates = []
         self.material_ids = {}
-        self.volume_info = {
-            "substrate": [],
-            "bump_layer": None,
-            "chip": None,
-        }
 
-        # Track z-coordinates for layer stacking
+        # Track z-coordinates
         self.current_z = 0.0
         self.substrate_top_z = 0.0
         self.bump_layer_top_z = 0.0
+
+        # Chip region boundaries
+        self.chip_x_min = CHIP["offset_x"]
+        self.chip_x_max = CHIP["offset_x"] + CHIP["length_x"]
+        self.chip_y_min = CHIP["offset_y"]
+        self.chip_y_max = CHIP["offset_y"] + CHIP["length_y"]
 
     def clear_model(self):
         """Clear all existing geometry and start fresh"""
@@ -72,15 +66,7 @@ class BumpModelBuilder:
         self.mapdl.prep7()
 
     def load_bump_coordinates(self, filepath=None):
-        """
-        Load bump coordinates from a text file
-        Coordinates are center positions of rectangular bumps
-
-        Parameters
-        ----------
-        filepath : str, optional
-            Path to bump coordinates file. Uses config default if not specified.
-        """
+        """Load bump coordinates from a text file"""
         if filepath is None:
             filepath = BUMP["coordinate_file"]
 
@@ -122,214 +108,224 @@ class BumpModelBuilder:
         print(f"Total materials defined: {len(self.material_ids)}")
 
     def set_element_type(self):
-        """Set element type for mapped meshing"""
-        print("\n--- Setting Element Type ---")
+        """Set element types for 2D and 3D meshing"""
+        print("\n--- Setting Element Types ---")
 
+        # 2D element for area mesh (will be deleted after extrusion)
+        self.mapdl.et(1, "MESH200", 7)  # 2D quadrilateral for mesh seeding
+        print("  ET 1: MESH200 (2D quad for meshing)")
+
+        # 3D element for volume mesh
         element_type = MESH["element_type"]
-        self.mapdl.et(1, element_type)
-        print(f"Element type: {element_type} (8-node hexahedral for mapped mesh)")
+        self.mapdl.et(2, element_type)
+        print(f"  ET 2: {element_type} (3D hexahedral)")
 
-    def create_substrate(self):
-        """Create substrate layers (PCB stackup) as stacked volumes"""
-        print("\n--- Creating Substrate (PCB Stackup) ---")
-
-        lx = SUBSTRATE["length_x"]
-        ly = SUBSTRATE["length_y"]
-        self.current_z = 0.0
-
-        for i, layer in enumerate(SUBSTRATE["layers"]):
-            thickness = layer["thickness"]
-            z_bottom = self.current_z
-            z_top = z_bottom + thickness
-            mat_name = layer["material"]
-            mat_id = self.material_ids[mat_name]
-
-            # Create block volume
-            self.mapdl.block(0, lx, 0, ly, z_bottom, z_top)
-            vol_num = self.mapdl.geometry.vnum[-1]
-
-            # Assign material attribute
-            self.mapdl.vsel("S", "VOLU", "", vol_num)
-            self.mapdl.vatt(mat_id, "", 1)
-
-            self.volume_info["substrate"].append({
-                "volume": vol_num,
-                "layer_name": layer["name"],
-                "material": mat_name,
-                "mat_id": mat_id,
-                "z_bottom": z_bottom,
-                "z_top": z_top
-            })
-
-            print(f"  {layer['name']}: Vol {vol_num}, Mat {mat_id} ({mat_name}), "
-                  f"z=[{z_bottom:.4f}, {z_top:.4f}] mm")
-
-            self.current_z = z_top
-
-        self.substrate_top_z = self.current_z
-        self.mapdl.allsel()
-        print(f"Substrate top z: {self.substrate_top_z:.4f} mm")
-
-    def create_bump_layer(self):
+    def create_base_area_with_chip_region(self):
         """
-        Create uniform bump layer under chip area
-        Material assignment to individual elements will be done after meshing
+        Create bottom area (substrate footprint) with chip region sliced out
+        This allows independent extrusion of chip area vs surrounding area
         """
-        print("\n--- Creating Bump Layer ---")
+        print("\n--- Creating Base Area with Chip Region ---")
 
-        # Bump layer covers chip area
-        x_min = CHIP["offset_x"]
-        x_max = CHIP["offset_x"] + CHIP["length_x"]
-        y_min = CHIP["offset_y"]
-        y_max = CHIP["offset_y"] + CHIP["length_y"]
+        sub_lx = SUBSTRATE["length_x"]
+        sub_ly = SUBSTRATE["length_y"]
 
-        height = BUMP["height"]
-        z_bottom = self.substrate_top_z
-        z_top = z_bottom + height
+        # Create full substrate area at z=0
+        self.mapdl.rectng(0, sub_lx, 0, sub_ly)
+        print(f"  Created substrate area: {sub_lx} x {sub_ly} mm")
 
-        # Initially assign air material (will be modified after meshing)
-        air_mat_id = self.material_ids[BUMP["air_material"]]
+        # Create chip region area (to be used for slicing)
+        self.mapdl.rectng(self.chip_x_min, self.chip_x_max,
+                         self.chip_y_min, self.chip_y_max)
+        print(f"  Created chip region: [{self.chip_x_min}, {self.chip_x_max}] x "
+              f"[{self.chip_y_min}, {self.chip_y_max}] mm")
 
-        # Create block volume for bump layer
-        self.mapdl.block(x_min, x_max, y_min, y_max, z_bottom, z_top)
-        vol_num = self.mapdl.geometry.vnum[-1]
+        # Overlap/slice the areas to create shared boundaries
+        self.mapdl.allsel()
+        self.mapdl.aovlap("ALL")
+        print("  Areas overlapped - chip region boundaries created")
 
-        self.mapdl.vsel("S", "VOLU", "", vol_num)
-        self.mapdl.vatt(air_mat_id, "", 1)
-
-        self.volume_info["bump_layer"] = {
-            "volume": vol_num,
-            "mat_id": air_mat_id,
-            "x_min": x_min,
-            "x_max": x_max,
-            "y_min": y_min,
-            "y_max": y_max,
-            "z_bottom": z_bottom,
-            "z_top": z_top
-        }
-
-        self.bump_layer_top_z = z_top
+        # Get resulting areas
         self.mapdl.allsel()
 
-        print(f"  Bump layer: Vol {vol_num}")
-        print(f"  Position: x=[{x_min}, {x_max}], y=[{y_min}, {y_max}], "
-              f"z=[{z_bottom:.4f}, {z_top:.4f}] mm")
-        print(f"  Initial material: Air (will assign bump material after meshing)")
+    def mesh_base_area(self):
+        """Generate 2D mesh on the base area"""
+        print("\n--- Meshing Base Area ---")
 
-    def create_chip(self):
-        """Create chip volume on top of bump layer"""
-        print("\n--- Creating Chip ---")
-
-        lx = CHIP["length_x"]
-        ly = CHIP["length_y"]
-        thickness = CHIP["thickness"]
-        offset_x = CHIP["offset_x"]
-        offset_y = CHIP["offset_y"]
-
-        mat_name = CHIP["material"]
-        mat_id = self.material_ids[mat_name]
-
-        z_bottom = self.bump_layer_top_z
-        z_top = z_bottom + thickness
-
-        self.mapdl.block(
-            offset_x, offset_x + lx,
-            offset_y, offset_y + ly,
-            z_bottom, z_top
-        )
-        vol_num = self.mapdl.geometry.vnum[-1]
-
-        self.mapdl.vsel("S", "VOLU", "", vol_num)
-        self.mapdl.vatt(mat_id, "", 1)
-
-        self.volume_info["chip"] = {
-            "volume": vol_num,
-            "mat_id": mat_id,
-            "z_bottom": z_bottom,
-            "z_top": z_top
-        }
-
-        self.mapdl.allsel()
-        print(f"  Chip: Vol {vol_num}, Mat {mat_id} ({mat_name})")
-        print(f"  Position: x=[{offset_x}, {offset_x + lx}], "
-              f"y=[{offset_y}, {offset_y + ly}], "
-              f"z=[{z_bottom:.4f}, {z_top:.4f}] mm")
-
-    def glue_volumes(self):
-        """Glue all volumes together for mesh connectivity"""
-        print("\n--- Gluing Volumes ---")
-        self.mapdl.allsel()
-        self.mapdl.vsel("ALL")
-        self.mapdl.vglue("ALL")
-        print("All volumes glued together")
-
-
-    def mesh_model(self):
-        """Generate mesh for all volumes"""
-        print("\n--- Generating Mesh ---")
-
-        self.mapdl.allsel()
-
-        # Set element size from config
         elem_size = MESH["element_size"]
+
+        self.mapdl.allsel()
+
+        # Set element type to 2D mesh seeding element
+        self.mapdl.type(1)
+
+        # Set element size
         self.mapdl.esize(elem_size)
         print(f"  Element size: {elem_size} mm")
 
-        # Set mesh shape preference to hexahedral
-        self.mapdl.mshape(0, "3D")  # 0 = hex preferred
+        # Set mapped mesh
+        self.mapdl.mshape(0, "2D")  # Quad elements
+        self.mapdl.mshkey(1)  # Mapped mesh
 
-        # Use free mesh (more robust after vglue)
-        self.mapdl.mshkey(0)  # 0 = free mesh
-
-        # Mesh all volumes
-        self.mapdl.vmesh("ALL")
+        # Mesh all areas
+        self.mapdl.amesh("ALL")
 
         num_elements = self.mapdl.mesh.n_elem
         num_nodes = self.mapdl.mesh.n_node
+        print(f"  2D mesh generated: {num_elements} elements, {num_nodes} nodes")
 
-        print(f"Mesh generated: {num_elements} elements, {num_nodes} nodes")
+    def extrude_substrate_layers(self):
+        """Extrude substrate layers from base mesh"""
+        print("\n--- Extruding Substrate Layers ---")
+
+        self.current_z = 0.0
+
+        # Switch to 3D element type
+        self.mapdl.type(2)
+
+        for i, layer in enumerate(SUBSTRATE["layers"]):
+            thickness = layer["thickness"]
+            mat_name = layer["material"]
+            mat_id = self.material_ids[mat_name]
+
+            # Set material for this extrusion
+            self.mapdl.mat(mat_id)
+
+            # Calculate number of divisions based on element size
+            elem_size = MESH["element_size"]
+            n_div = max(1, int(round(thickness / elem_size)))
+
+            # Select all elements at current z level
+            self.mapdl.allsel()
+            self.mapdl.esel("S", "CENT", "Z", self.current_z - 0.001, self.current_z + 0.001)
+
+            # Extrude in z direction
+            # VEXT: extrude selected elements
+            self.mapdl.vext("ALL", dx=0, dy=0, dz=thickness)
+
+            z_bottom = self.current_z
+            self.current_z += thickness
+
+            print(f"  {layer['name']}: Mat {mat_id}, z=[{z_bottom:.4f}, {self.current_z:.4f}] mm, "
+                  f"{n_div} div")
+
+        self.substrate_top_z = self.current_z
+        print(f"  Substrate top z: {self.substrate_top_z:.4f} mm")
+
+    def extrude_bump_layer(self):
+        """Extrude bump layer only under chip area"""
+        print("\n--- Extruding Bump Layer ---")
+
+        height = BUMP["height"]
+        air_mat_id = self.material_ids[BUMP["air_material"]]
+
+        # Select elements in chip region at substrate top
+        self.mapdl.allsel()
+        self.mapdl.esel("S", "CENT", "Z", self.substrate_top_z - 0.001,
+                       self.substrate_top_z + 0.001)
+        self.mapdl.esel("R", "CENT", "X", self.chip_x_min, self.chip_x_max)
+        self.mapdl.esel("R", "CENT", "Y", self.chip_y_min, self.chip_y_max)
+
+        # Set air material (default for bump layer, will modify bump elements later)
+        self.mapdl.mat(air_mat_id)
+
+        # Extrude
+        self.mapdl.vext("ALL", dx=0, dy=0, dz=height)
+
+        self.bump_layer_top_z = self.substrate_top_z + height
+        print(f"  Bump layer: z=[{self.substrate_top_z:.4f}, {self.bump_layer_top_z:.4f}] mm")
+        print(f"  Initial material: Air (Mat {air_mat_id})")
+
+    def extrude_chip(self):
+        """Extrude chip on top of bump layer"""
+        print("\n--- Extruding Chip ---")
+
+        thickness = CHIP["thickness"]
+        mat_name = CHIP["material"]
+        mat_id = self.material_ids[mat_name]
+
+        # Select elements in chip region at bump layer top
+        self.mapdl.allsel()
+        self.mapdl.esel("S", "CENT", "Z", self.bump_layer_top_z - 0.001,
+                       self.bump_layer_top_z + 0.001)
+        self.mapdl.esel("R", "CENT", "X", self.chip_x_min, self.chip_x_max)
+        self.mapdl.esel("R", "CENT", "Y", self.chip_y_min, self.chip_y_max)
+
+        # Set chip material
+        self.mapdl.mat(mat_id)
+
+        # Extrude
+        self.mapdl.vext("ALL", dx=0, dy=0, dz=thickness)
+
+        chip_top_z = self.bump_layer_top_z + thickness
+        print(f"  Chip: Mat {mat_id} ({mat_name}), z=[{self.bump_layer_top_z:.4f}, {chip_top_z:.4f}] mm")
+
+    def cleanup_2d_elements(self):
+        """Remove 2D seed elements, keep only 3D elements"""
+        print("\n--- Cleaning Up 2D Elements ---")
+
+        # Select elements with ET=1 (2D elements)
+        self.mapdl.esel("S", "TYPE", "", 1)
+        num_2d = self.mapdl.mesh.n_elem
+
+        if num_2d > 0:
+            self.mapdl.edele("ALL")
+            print(f"  Deleted {num_2d} 2D seed elements")
+
+        self.mapdl.allsel()
+
+    def merge_nodes(self):
+        """Merge coincident nodes for connectivity"""
+        print("\n--- Merging Nodes ---")
+
+        self.mapdl.allsel()
+
+        # Merge nodes with small tolerance
+        self.mapdl.nummrg("NODE", 1e-6)
+        self.mapdl.numcmp("NODE")  # Compress node numbering
+
+        print("  Nodes merged and compressed")
 
     def assign_bump_materials(self):
-        """
-        Assign bump material to elements at bump coordinates
-        and air material to remaining elements in bump layer
-        """
+        """Assign bump material to elements at bump coordinates"""
         print("\n--- Assigning Bump Materials by Element Location ---")
 
         if not self.bump_coordinates:
-            print("Warning: No bump coordinates loaded")
+            print("  Warning: No bump coordinates loaded")
             return
 
-        bump_layer = self.volume_info["bump_layer"]
         bump_mat_id = self.material_ids[BUMP["material"]]
         air_mat_id = self.material_ids[BUMP["air_material"]]
 
-        z_bottom = bump_layer["z_bottom"]
-        z_top = bump_layer["z_top"]
-        z_mid = (z_bottom + z_top) / 2.0
+        z_bottom = self.substrate_top_z
+        z_top = self.bump_layer_top_z
 
         # Get bump dimensions
         half_wx = BUMP["width_x"] / 2.0
         half_wy = BUMP["width_y"] / 2.0
 
-        # Select elements in bump layer by location
-        self.mapdl.esel("S", "CENT", "Z", z_bottom, z_top)
-        bump_layer_elements = self.mapdl.mesh.enum.copy()
+        # Select 3D elements in bump layer by location
+        self.mapdl.allsel()
+        self.mapdl.esel("S", "TYPE", "", 2)  # Only 3D elements
+        self.mapdl.esel("R", "CENT", "Z", z_bottom + 0.001, z_top - 0.001)
 
+        # Get element list
+        bump_layer_elements = self.mapdl.mesh.enum.copy()
         print(f"  Total elements in bump layer: {len(bump_layer_elements)}")
 
-        # Get element centroids
+        if len(bump_layer_elements) == 0:
+            print("  Warning: No elements found in bump layer")
+            return
+
+        # Assign materials based on element centroid
         bump_elem_count = 0
 
         for elem_id in bump_layer_elements:
             # Get element centroid
             self.mapdl.esel("S", "ELEM", "", elem_id)
 
-            # Get centroid using MAPDL queries
-            result = self.mapdl.get("cx", "ELEM", elem_id, "CENT", "X")
-            cx = float(result)
-            result = self.mapdl.get("cy", "ELEM", elem_id, "CENT", "Y")
-            cy = float(result)
+            cx = float(self.mapdl.get("cx", "ELEM", elem_id, "CENT", "X"))
+            cy = float(self.mapdl.get("cy", "ELEM", elem_id, "CENT", "Y"))
 
             # Check if element centroid is within any bump region
             is_bump = False
@@ -340,33 +336,30 @@ class BumpModelBuilder:
                     break
 
             if is_bump:
-                # Assign bump material
                 self.mapdl.emodif(elem_id, "MAT", bump_mat_id)
                 bump_elem_count += 1
 
-        # Remaining elements already have air material (default)
         air_elem_count = len(bump_layer_elements) - bump_elem_count
-
         self.mapdl.allsel()
 
         print(f"  Bump elements: {bump_elem_count}")
         print(f"  Air elements: {air_elem_count}")
-        print(f"  Bump material ID: {bump_mat_id}, Air material ID: {air_mat_id}")
 
     def save_model(self, filename="bump_model"):
         """Save the model database (.db) and CDB file (.cdb)"""
         print(f"\n--- Saving Model as '{filename}' ---")
 
+        self.mapdl.allsel()
+
         # Save MAPDL database (.db)
         self.mapdl.save(filename)
         db_path = os.path.join(self.working_dir, filename + '.db')
-        print(f"Model database saved to: {db_path}")
+        print(f"  Database: {db_path}")
 
         # Save CDB file
-        cdb_path = os.path.join(self.working_dir, filename + '.cdb')
-        self.mapdl.allsel()
         self.mapdl.cdwrite("ALL", filename, "cdb")
-        print(f"CDB file saved to: {cdb_path}")
+        cdb_path = os.path.join(self.working_dir, filename + '.cdb')
+        print(f"  CDB file: {cdb_path}")
 
         return db_path, cdb_path
 
@@ -376,14 +369,20 @@ class BumpModelBuilder:
         print("MODEL SUMMARY")
         print("=" * 60)
 
+        # Mesh statistics
+        self.mapdl.allsel()
+        num_elements = self.mapdl.mesh.n_elem
+        num_nodes = self.mapdl.mesh.n_node
+
+        print(f"\nMesh Statistics:")
+        print(f"  Total elements: {num_elements}")
+        print(f"  Total nodes: {num_nodes}")
+
         print(f"\nSubstrate (PCB):")
         print(f"  Size: {SUBSTRATE['length_x']} x {SUBSTRATE['length_y']} mm")
         print(f"  Layers: {len(SUBSTRATE['layers'])}")
         total_thickness = sum(layer['thickness'] for layer in SUBSTRATE['layers'])
         print(f"  Total thickness: {total_thickness:.4f} mm")
-        print(f"  Stackup:")
-        for layer in SUBSTRATE["layers"]:
-            print(f"    - {layer['name']}: {layer['thickness']} mm ({layer['material']})")
 
         print(f"\nBump Layer:")
         print(f"  Size: {CHIP['length_x']} x {CHIP['length_y']} mm (under chip)")
@@ -393,7 +392,6 @@ class BumpModelBuilder:
 
         print(f"\nChip:")
         print(f"  Size: {CHIP['length_x']} x {CHIP['length_y']} x {CHIP['thickness']} mm")
-        print(f"  Position: offset ({CHIP['offset_x']}, {CHIP['offset_y']}) mm")
 
         print(f"\nZ-coordinates:")
         print(f"  Substrate: 0 to {self.substrate_top_z:.4f} mm")
@@ -405,19 +403,10 @@ class BumpModelBuilder:
         print("\n" + "=" * 60)
 
     def build_full_model(self, coordinate_file=None, save=True):
-        """
-        Build the complete model
-
-        Parameters
-        ----------
-        coordinate_file : str, optional
-            Path to bump coordinates file
-        save : bool, optional
-            Whether to save the model (default True)
-        """
+        """Build the complete model using bottom-up extrusion"""
         print("=" * 60)
         print("BUILDING SUBSTRATE + BUMP LAYER + CHIP MODEL")
-        print("(Element-based Material Assignment for Bump Layer)")
+        print("(Bottom-up Extrusion Approach)")
         print("=" * 60)
 
         # Clear and initialize
@@ -429,21 +418,27 @@ class BumpModelBuilder:
         # Define materials
         self.define_materials()
 
-        # Set element type
+        # Set element types
         self.set_element_type()
 
-        # Create geometry (materials assigned during creation)
-        self.create_substrate()
-        self.create_bump_layer()
-        self.create_chip()
+        # Create base area with chip region marked
+        self.create_base_area_with_chip_region()
 
-        # Glue volumes
-        self.glue_volumes()
+        # Mesh base area (2D)
+        self.mesh_base_area()
 
-        # Generate mesh
-        self.mesh_model()
+        # Extrude layers bottom-up
+        self.extrude_substrate_layers()
+        self.extrude_bump_layer()
+        self.extrude_chip()
 
-        # Assign bump/air materials based on element location
+        # Cleanup 2D elements
+        self.cleanup_2d_elements()
+
+        # Merge nodes
+        self.merge_nodes()
+
+        # Assign bump/air materials
         self.assign_bump_materials()
 
         # Save if requested
@@ -474,16 +469,10 @@ def main():
         )
 
         print("\nModel building complete!")
-        print("You can now use the mapdl instance for analysis.")
 
     except Exception as e:
         print(f"Error during model building: {e}")
         raise
-
-    finally:
-        # Optionally close MAPDL
-        # builder.close()
-        pass
 
     return builder
 

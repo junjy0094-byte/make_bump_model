@@ -1,12 +1,14 @@
 """
 Example script to run the Substrate + Bump + Chip model builder
-This script demonstrates how to use the model builder with different configurations
 
-New Algorithm:
-- Substrate: PCB stackup (SR-Cu-Prepreg-Cu-Core-Cu-Prepreg-Cu-SR)
-- Bump Layer: Uniform layer under chip, materials assigned by element location
-- Chip: Silicon die on top of bump layer
-- All structures use mapped mesh
+New Algorithm (Bottom-up Extrusion):
+1. Create base area with chip region sliced
+2. Mesh base area (2D mapped mesh)
+3. Extrude substrate layers
+4. Extrude bump layer (chip area only)
+5. Extrude chip
+6. Merge nodes
+7. Assign bump/air materials by element location
 """
 
 from model_builder import BumpModelBuilder
@@ -16,28 +18,7 @@ import config
 def run_with_default_config():
     """Run model with default configuration from config.py"""
     print("Running with default configuration...")
-    print("PCB Stackup: SR-Cu-Prepreg-Cu-Core-Cu-Prepreg-Cu-SR")
-
-    builder = BumpModelBuilder()
-
-    try:
-        builder.build_full_model(
-            coordinate_file="bump_coordinates.txt",
-            save=True
-        )
-    finally:
-        builder.close()
-
-
-def run_with_custom_bump_size():
-    """Run model with custom bump dimensions"""
-
-    # Modify bump size at runtime
-    config.BUMP["width_x"] = 0.15   # 150um
-    config.BUMP["width_y"] = 0.15   # 150um
-    config.BUMP["height"] = 0.08    # 80um
-
-    print("Running with custom bump size: 0.15 x 0.15 x 0.08 mm")
+    print("Using bottom-up extrusion approach")
 
     builder = BumpModelBuilder()
 
@@ -67,39 +48,47 @@ def run_step_by_step():
 
         # Step 3: Define materials
         builder.define_materials()
-        print(f"\n[Step 3] Materials defined: {list(builder.material_ids.keys())}")
+        print(f"\n[Step 3] Materials defined")
 
-        # Step 4: Set element type
+        # Step 4: Set element types
         builder.set_element_type()
-        print("\n[Step 4] Element type set (SOLID185 for mapped mesh)")
+        print("\n[Step 4] Element types set (MESH200 + SOLID185)")
 
-        # Step 5: Create substrate (PCB stackup)
-        builder.create_substrate()
-        print(f"\n[Step 5] Substrate (PCB) created, top z = {builder.substrate_top_z:.4f} mm")
+        # Step 5: Create base area with chip region
+        builder.create_base_area_with_chip_region()
+        print("\n[Step 5] Base area created with chip region sliced")
 
-        # Step 6: Create bump layer (uniform layer under chip)
-        builder.create_bump_layer()
-        print(f"\n[Step 6] Bump layer created, top z = {builder.bump_layer_top_z:.4f} mm")
+        # Step 6: Mesh base area (2D)
+        builder.mesh_base_area()
+        print("\n[Step 6] 2D base mesh generated")
 
-        # Step 7: Create chip
-        builder.create_chip()
-        print("\n[Step 7] Chip created")
+        # Step 7: Extrude substrate layers
+        builder.extrude_substrate_layers()
+        print(f"\n[Step 7] Substrate extruded, top z = {builder.substrate_top_z:.4f} mm")
 
-        # Step 8: Glue volumes
-        builder.glue_volumes()
-        print("\n[Step 8] Volumes glued")
+        # Step 8: Extrude bump layer
+        builder.extrude_bump_layer()
+        print(f"\n[Step 8] Bump layer extruded, top z = {builder.bump_layer_top_z:.4f} mm")
 
-        # Step 9: Generate mesh
-        builder.mesh_model()
-        print("\n[Step 9] Mesh generated")
+        # Step 9: Extrude chip
+        builder.extrude_chip()
+        print("\n[Step 9] Chip extruded")
 
-        # Step 10: Assign bump materials by element location
+        # Step 10: Cleanup 2D elements
+        builder.cleanup_2d_elements()
+        print("\n[Step 10] 2D elements cleaned up")
+
+        # Step 11: Merge nodes
+        builder.merge_nodes()
+        print("\n[Step 11] Nodes merged")
+
+        # Step 12: Assign bump materials
         builder.assign_bump_materials()
-        print("\n[Step 10] Bump/Air materials assigned to elements")
+        print("\n[Step 12] Bump/Air materials assigned")
 
-        # Step 11: Save model
+        # Step 13: Save model
         builder.save_model("step_by_step_model")
-        print("\n[Step 11] Model saved (.db and .cdb)")
+        print("\n[Step 13] Model saved (.db and .cdb)")
 
         # Print summary
         builder.get_model_summary()
@@ -138,13 +127,11 @@ if __name__ == "__main__":
 
     if mode == "default":
         run_with_default_config()
-    elif mode == "custom":
-        run_with_custom_bump_size()
     elif mode == "step":
         run_step_by_step()
     elif mode == "stackup":
         show_pcb_stackup()
     else:
         print(f"Unknown mode: {mode}")
-        print("Available modes: default, custom, step, stackup")
+        print("Available modes: default, step, stackup")
         sys.exit(1)
