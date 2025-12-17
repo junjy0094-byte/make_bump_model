@@ -1,0 +1,5 @@
+# PyAnsys dependencies for Substrate + Bump + Chip modeling
+ansys-mapdl-core>=0.68.0
+numpy>=1.21.0
+matplotlib>=3.5.0
+pyvista>=0.42.0  # For visualization
