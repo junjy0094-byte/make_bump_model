@@ -118,20 +118,11 @@ CHIP = {
 }
 
 # =============================================================================
-# Mesh Configuration (Mapped Mesh)
+# Mesh Configuration
 # =============================================================================
 MESH = {
-    # Number of divisions for mapped mesh
-    "substrate_div_x": 50,      # divisions in x direction for substrate
-    "substrate_div_y": 50,      # divisions in y direction for substrate
-    "bump_layer_div_x": 80,     # divisions in x direction for bump layer (under chip)
-    "bump_layer_div_y": 80,     # divisions in y direction for bump layer
-    "bump_layer_div_z": 2,      # divisions in z direction for bump layer
-    "chip_div_x": 40,           # divisions in x direction for chip
-    "chip_div_y": 40,           # divisions in y direction for chip
-    "chip_div_z": 6,            # divisions in z direction for chip
-    "layer_div_z": 2,           # divisions in z direction per substrate layer
-    "element_type": "SOLID185",  # 8-node hexahedral for mapped mesh
+    "element_size": 0.1,        # Global element size in mm
+    "element_type": "SOLID185",  # 8-node hexahedral element
 }
 
 # =============================================================================

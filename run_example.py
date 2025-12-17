@@ -89,21 +89,17 @@ def run_step_by_step():
         builder.glue_volumes()
         print("\n[Step 8] Volumes glued")
 
-        # Step 9: Apply mesh divisions
-        builder.apply_mapped_mesh_divisions()
-        print("\n[Step 9] Mesh divisions applied")
-
-        # Step 10: Generate mapped mesh
+        # Step 9: Generate mesh
         builder.mesh_model()
-        print("\n[Step 10] Mapped mesh generated")
+        print("\n[Step 9] Mesh generated")
 
-        # Step 11: Assign bump materials by element location
+        # Step 10: Assign bump materials by element location
         builder.assign_bump_materials()
-        print("\n[Step 11] Bump/Air materials assigned to elements")
+        print("\n[Step 10] Bump/Air materials assigned to elements")
 
-        # Step 12: Save model
+        # Step 11: Save model
         builder.save_model("step_by_step_model")
-        print("\n[Step 12] Model saved (.db and .cdb)")
+        print("\n[Step 11] Model saved (.db and .cdb)")
 
         # Print summary
         builder.get_model_summary()

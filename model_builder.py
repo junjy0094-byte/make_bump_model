@@ -263,40 +263,23 @@ class BumpModelBuilder:
         self.mapdl.vglue("ALL")
         print("All volumes glued together")
 
-    def apply_mapped_mesh_divisions(self):
-        """Set line divisions for mapped meshing"""
-        print("\n--- Setting Mapped Mesh Divisions ---")
-
-        # Get all lines and set divisions based on orientation
-        self.mapdl.allsel()
-
-        # Substrate divisions
-        div_x = MESH["substrate_div_x"]
-        div_y = MESH["substrate_div_y"]
-        div_z = MESH["layer_div_z"]
-
-        # Select lines by direction and set divisions
-        # This is a simplified approach - in practice you may need more specific line selection
-
-        print(f"  Substrate: {div_x} x {div_y} x {div_z} per layer")
-        print(f"  Bump layer: {MESH['bump_layer_div_x']} x {MESH['bump_layer_div_y']} x {MESH['bump_layer_div_z']}")
-        print(f"  Chip: {MESH['chip_div_x']} x {MESH['chip_div_y']} x {MESH['chip_div_z']}")
 
     def mesh_model(self):
-        """Generate mapped mesh for all volumes"""
-        print("\n--- Generating Mapped Mesh ---")
+        """Generate mesh for all volumes"""
+        print("\n--- Generating Mesh ---")
 
         self.mapdl.allsel()
 
-        # Use VSWEEP for mapped meshing (sweeps mesh through volumes)
-        # First, we need to ensure volumes are meshable with mapped mesh
+        # Set element size from config
+        elem_size = MESH["element_size"]
+        self.mapdl.esize(elem_size)
+        print(f"  Element size: {elem_size} mm")
 
-        # Set mesh shape to hexahedral
-        self.mapdl.mshape(0, "3D")  # 0 = quadrilateral/hexahedral
-        self.mapdl.mshkey(1)  # 1 = mapped mesh
+        # Set mesh shape preference to hexahedral
+        self.mapdl.mshape(0, "3D")  # 0 = hex preferred
 
-        # Set smart element sizing
-        self.mapdl.smrtsize(6)  # Medium smart sizing
+        # Use free mesh (more robust after vglue)
+        self.mapdl.mshkey(0)  # 0 = free mesh
 
         # Mesh all volumes
         self.mapdl.vmesh("ALL")
@@ -434,7 +417,7 @@ class BumpModelBuilder:
         """
         print("=" * 60)
         print("BUILDING SUBSTRATE + BUMP LAYER + CHIP MODEL")
-        print("(Mapped Mesh with Element-based Material Assignment)")
+        print("(Element-based Material Assignment for Bump Layer)")
         print("=" * 60)
 
         # Clear and initialize
@@ -457,10 +440,7 @@ class BumpModelBuilder:
         # Glue volumes
         self.glue_volumes()
 
-        # Set mesh divisions
-        self.apply_mapped_mesh_divisions()
-
-        # Generate mapped mesh
+        # Generate mesh
         self.mesh_model()
 
         # Assign bump/air materials based on element location
