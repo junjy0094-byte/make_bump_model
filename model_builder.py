@@ -210,146 +210,148 @@ class BumpModelBuilder:
 
         return num_elements > 0
 
-    def extrude_substrate_layers(self):
-        """Extrude 2D mesh to create substrate layers"""
-        print("\n--- Extruding Substrate Layers ---")
+    def extrude_all_layers(self):
+        """Extrude 2D mesh to create all layers at once with different heights"""
+        print("\n--- Extruding All Layers ---")
 
-        self.current_z = 0.0
         self.layer_z_ranges = []
 
-        # Set element type to 3D solid for extrusion
-        self.mapdl.type(1)
+        # Calculate total substrate thickness
+        substrate_thickness = sum(layer["thickness"] for layer in SUBSTRATE["layers"])
+        bump_height = BUMP["height"]
+        chip_thickness = CHIP["thickness"]
 
-        for i, layer in enumerate(SUBSTRATE["layers"]):
+        # Store substrate layer info
+        z_current = 0.0
+        for layer in SUBSTRATE["layers"]:
             thickness = layer["thickness"]
             mat_name = layer["material"]
             mat_id = self.material_ids[mat_name]
-            n_divisions = max(1, int(round(thickness / MESH["element_size"])))
-            if n_divisions < 1:
-                n_divisions = 1
 
-            z_bottom = self.current_z
-            z_top = z_bottom + thickness
-
-            # Store layer info
             self.layer_z_ranges.append({
                 "name": layer["name"],
                 "mat_id": mat_id,
-                "z_bottom": z_bottom,
-                "z_top": z_top
+                "z_bottom": z_current,
+                "z_top": z_current + thickness
             })
+            z_current += thickness
+            print(f"  Substrate layer {layer['name']}: z=[{z_current-thickness:.4f}, {z_current:.4f}] mm")
 
-            # Select elements at current z level (all areas for substrate)
-            self.mapdl.allsel()
-            self.mapdl.esel("S", "CENT", "Z", self.current_z - 0.0001, self.current_z + 0.0001)
+        self.substrate_top_z = substrate_thickness
 
-            selected_count = self.mapdl.mesh.n_elem
-            print(f"  Layer {i} ({layer['name']}): {selected_count} elements at z={self.current_z:.4f}")
-
-            if selected_count == 0:
-                print(f"  WARNING: No elements found at z={self.current_z:.4f}!")
-                continue
-
-            # Set material for this extrusion
-            self.mapdl.mat(mat_id)
-
-            # Extrude using VEXT (extrude elements in z direction)
-            # VEXT, ELEM, NINC, DX, DY, DZ
-            self.mapdl.vext("ALL", "", "", 0, 0, thickness, 1, 1, n_divisions)
-
-            self.current_z = z_top
-            print(f"    Extruded: thickness={thickness:.4f}, divisions={n_divisions}, Mat={mat_id}")
-
-        self.substrate_top_z = self.current_z
-
-        self.mapdl.allsel()
-        num_elements = self.mapdl.mesh.n_elem
-        print(f"  Substrate top z: {self.substrate_top_z:.4f} mm")
-        print(f"  Total elements after substrate: {num_elements}")
-
-    def extrude_bump_layer(self):
-        """Extrude bump layer from chip region only"""
-        print("\n--- Extruding Bump Layer ---")
-
-        height = BUMP["height"]
-        air_mat_id = self.material_ids[BUMP["air_material"]]
-        n_divisions = max(1, int(round(height / MESH["element_size"])))
-
-        z_bottom = self.substrate_top_z
-        z_top = z_bottom + height
-
-        # Store layer info
+        # Store bump layer info
         self.layer_z_ranges.append({
             "name": "bump_layer",
-            "mat_id": air_mat_id,
-            "z_bottom": z_bottom,
-            "z_top": z_top,
+            "mat_id": self.material_ids[BUMP["air_material"]],
+            "z_bottom": substrate_thickness,
+            "z_top": substrate_thickness + bump_height,
             "is_bump_layer": True
         })
+        self.bump_layer_top_z = substrate_thickness + bump_height
+        print(f"  Bump layer: z=[{substrate_thickness:.4f}, {self.bump_layer_top_z:.4f}] mm")
 
-        # Select elements in chip region at substrate top
-        self.mapdl.allsel()
-        self.mapdl.esel("S", "CENT", "Z", self.substrate_top_z - 0.0001, self.substrate_top_z + 0.0001)
-        self.mapdl.esel("R", "CENT", "X", self.chip_x_min + 0.001, self.chip_x_max - 0.001)
-        self.mapdl.esel("R", "CENT", "Y", self.chip_y_min + 0.001, self.chip_y_max - 0.001)
-
-        selected_count = self.mapdl.mesh.n_elem
-        print(f"  Chip region elements at z={self.substrate_top_z:.4f}: {selected_count}")
-
-        if selected_count == 0:
-            print("  WARNING: No elements in chip region!")
-            self.bump_layer_top_z = z_top
-            return
-
-        # Set material (air initially, bumps will be assigned later)
-        self.mapdl.mat(air_mat_id)
-
-        # Extrude chip region elements
-        self.mapdl.vext("ALL", "", "", 0, 0, height, 1, 1, n_divisions)
-
-        self.bump_layer_top_z = z_top
-        print(f"  Bump layer: z=[{z_bottom:.4f}, {z_top:.4f}] mm, divisions={n_divisions}")
-
-    def extrude_chip(self):
-        """Extrude chip from bump layer top"""
-        print("\n--- Extruding Chip ---")
-
-        thickness = CHIP["thickness"]
-        mat_name = CHIP["material"]
-        mat_id = self.material_ids[mat_name]
-        n_divisions = max(1, int(round(thickness / MESH["element_size"])))
-
-        z_bottom = self.bump_layer_top_z
-        z_top = z_bottom + thickness
-
-        # Store layer info
+        # Store chip layer info
+        chip_top_z = self.bump_layer_top_z + chip_thickness
         self.layer_z_ranges.append({
             "name": "chip",
-            "mat_id": mat_id,
-            "z_bottom": z_bottom,
-            "z_top": z_top
+            "mat_id": self.material_ids[CHIP["material"]],
+            "z_bottom": self.bump_layer_top_z,
+            "z_top": chip_top_z
         })
+        print(f"  Chip: z=[{self.bump_layer_top_z:.4f}, {chip_top_z:.4f}] mm")
 
-        # Select elements in chip region at bump layer top
+        # Set element type to 3D solid
+        self.mapdl.type(1)
+
+        # ===== Extrude substrate-only region (outside chip area) =====
+        print("\n  Extruding substrate-only region...")
         self.mapdl.allsel()
-        self.mapdl.esel("S", "CENT", "Z", self.bump_layer_top_z - 0.0001, self.bump_layer_top_z + 0.0001)
+        self.mapdl.esel("S", "TYPE", "", 2)  # MESH200 elements
+
+        # Deselect chip region
+        self.mapdl.esel("U", "CENT", "X", self.chip_x_min + 0.001, self.chip_x_max - 0.001)
+
+        # Also need to handle Y range - reselect and properly exclude chip region
+        self.mapdl.allsel()
+        self.mapdl.esel("S", "TYPE", "", 2)
+
+        # Select elements OUTSIDE chip region (by excluding chip X and Y)
+        # This is tricky - we need elements NOT in chip region
+        # Approach: select all, then for chip region elements, unselect them
+        all_2d_count = self.mapdl.mesh.n_elem
+        print(f"    Total 2D elements: {all_2d_count}")
+
+        # Get chip region elements
+        self.mapdl.esel("R", "CENT", "X", self.chip_x_min - 0.001, self.chip_x_max + 0.001)
+        self.mapdl.esel("R", "CENT", "Y", self.chip_y_min - 0.001, self.chip_y_max + 0.001)
+        chip_2d_count = self.mapdl.mesh.n_elem
+        print(f"    Chip region 2D elements: {chip_2d_count}")
+
+        # Select substrate-only elements (outside chip region)
+        self.mapdl.allsel()
+        self.mapdl.esel("S", "TYPE", "", 2)
+        self.mapdl.esel("U", "CENT", "X", self.chip_x_min + 0.001, self.chip_x_max - 0.001)
+
+        # Re-add elements outside chip Y range
+        self.mapdl.allsel()
+        self.mapdl.esel("S", "TYPE", "", 2)
+        # Complex selection - let's use a different approach
+
+        # Simpler approach: select chip region, invert selection
+        self.mapdl.esel("R", "CENT", "X", self.chip_x_min + 0.001, self.chip_x_max - 0.001)
+        self.mapdl.esel("R", "CENT", "Y", self.chip_y_min + 0.001, self.chip_y_max - 0.001)
+        chip_elems = list(self.mapdl.mesh.enum)
+
+        # Now select all 2D and unselect chip elements
+        self.mapdl.allsel()
+        self.mapdl.esel("S", "TYPE", "", 2)
+        for elem in chip_elems:
+            self.mapdl.esel("U", "ELEM", "", elem)
+
+        substrate_only_count = self.mapdl.mesh.n_elem
+        print(f"    Substrate-only 2D elements: {substrate_only_count}")
+
+        if substrate_only_count > 0:
+            substrate_divisions = max(1, int(round(substrate_thickness / MESH["element_size"])))
+            self.mapdl.vext("ALL", "", "", 0, 0, substrate_thickness, 1, 1, substrate_divisions)
+            print(f"    Extruded substrate: thickness={substrate_thickness:.4f}, divisions={substrate_divisions}")
+
+        # ===== Extrude chip region (substrate + bump + chip) =====
+        print("\n  Extruding chip region (full stack)...")
+        self.mapdl.allsel()
+        self.mapdl.esel("S", "TYPE", "", 2)
         self.mapdl.esel("R", "CENT", "X", self.chip_x_min + 0.001, self.chip_x_max - 0.001)
         self.mapdl.esel("R", "CENT", "Y", self.chip_y_min + 0.001, self.chip_y_max - 0.001)
 
-        selected_count = self.mapdl.mesh.n_elem
-        print(f"  Chip region elements at z={self.bump_layer_top_z:.4f}: {selected_count}")
+        chip_region_count = self.mapdl.mesh.n_elem
+        print(f"    Chip region 2D elements: {chip_region_count}")
 
-        if selected_count == 0:
-            print("  WARNING: No elements for chip extrusion!")
-            return
+        if chip_region_count > 0:
+            total_chip_height = substrate_thickness + bump_height + chip_thickness
+            total_divisions = max(1, int(round(total_chip_height / MESH["element_size"])))
+            self.mapdl.vext("ALL", "", "", 0, 0, total_chip_height, 1, 1, total_divisions)
+            print(f"    Extruded chip stack: thickness={total_chip_height:.4f}, divisions={total_divisions}")
 
-        # Set material
-        self.mapdl.mat(mat_id)
+        # ===== Assign materials based on z-location =====
+        print("\n  Assigning materials to layers...")
+        for layer_info in self.layer_z_ranges:
+            z_bottom = layer_info["z_bottom"]
+            z_top = layer_info["z_top"]
+            mat_id = layer_info["mat_id"]
+            name = layer_info["name"]
 
-        # Extrude
-        self.mapdl.vext("ALL", "", "", 0, 0, thickness, 1, 1, n_divisions)
+            self.mapdl.allsel()
+            self.mapdl.esel("S", "TYPE", "", 1)  # 3D elements only
+            self.mapdl.esel("R", "CENT", "Z", z_bottom + 0.0001, z_top - 0.0001)
 
-        print(f"  Chip: z=[{z_bottom:.4f}, {z_top:.4f}] mm, Mat={mat_id}, divisions={n_divisions}")
+            n_elem = self.mapdl.mesh.n_elem
+            if n_elem > 0:
+                self.mapdl.emodif("ALL", "MAT", mat_id)
+                print(f"    {name}: {n_elem} elements, Mat={mat_id}")
+
+        self.mapdl.allsel()
+        total_3d = self.mapdl.mesh.n_elem
+        print(f"\n  Total 3D elements created: {total_3d}")
 
     def delete_2d_elements(self):
         """Delete the original 2D MESH200 elements"""
@@ -497,10 +499,10 @@ class BumpModelBuilder:
             print("ERROR: Failed to generate 2D mesh!")
             return self.mapdl
 
-        # Step 3: Extrude layers
-        self.extrude_substrate_layers()
-        self.extrude_bump_layer()
-        self.extrude_chip()
+        # Step 3: Extrude all layers at once
+        # - Substrate-only region: substrate thickness
+        # - Chip region: substrate + bump + chip thickness
+        self.extrude_all_layers()
 
         # Step 4: Clean up and finalize
         self.delete_2d_elements()
