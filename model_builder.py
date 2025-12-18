@@ -218,9 +218,11 @@ class BumpModelBuilder:
                         pass
 
             # Extrude areas to create volumes (VOFFST)
+            # Use individual area numbers instead of "ALL" to avoid undefined area 0 issue
             print(f"  DEBUG Layer {i}: Running VOFFST with thickness={thickness}")
-            voffst_result = self.mapdl.voffst("ALL", thickness)
-            print(f"  DEBUG Layer {i}: VOFFST result: {voffst_result}")
+            for area_num in selected_areas:
+                voffst_result = self.mapdl.voffst(area_num, thickness)
+                print(f"  DEBUG Layer {i}: VOFFST area {area_num} result: {voffst_result}")
 
             # DEBUG: Check volumes after extrusion
             self.mapdl.allsel()
@@ -268,8 +270,9 @@ class BumpModelBuilder:
         chip_areas = self.mapdl.geometry.anum
         print(f"  DEBUG: Chip region areas selected: {len(chip_areas)}, numbers: {chip_areas}")
 
-        # Extrude
-        self.mapdl.voffst("ALL", height)
+        # Extrude - use individual area numbers
+        for area_num in chip_areas:
+            self.mapdl.voffst(area_num, height)
 
         # DEBUG: Check volumes after bump extrusion
         self.mapdl.allsel()
@@ -313,8 +316,9 @@ class BumpModelBuilder:
         chip_top_areas = self.mapdl.geometry.anum
         print(f"  DEBUG: Chip top areas selected: {len(chip_top_areas)}, numbers: {chip_top_areas}")
 
-        # Extrude
-        self.mapdl.voffst("ALL", thickness)
+        # Extrude - use individual area numbers
+        for area_num in chip_top_areas:
+            self.mapdl.voffst(area_num, thickness)
 
         # DEBUG: Check final volume count
         self.mapdl.allsel()
