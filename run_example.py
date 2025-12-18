@@ -44,36 +44,31 @@ def run_step_by_step():
         builder.define_materials()
         print("\n[3] Materials defined")
 
-        builder.set_element_type()
-        print("\n[4] Element type set")
+        builder.set_element_types()
+        print("\n[4] Element types set")
 
         builder.create_base_areas()
         print("\n[5] Base areas created")
 
-        builder.extrude_substrate_layers()
-        print(f"\n[6] Substrate extruded, z={builder.substrate_top_z:.4f}")
+        builder.mesh_base_areas()
+        print("\n[6] Base areas meshed (2D)")
 
-        builder.extrude_bump_layer()
-        print(f"\n[7] Bump layer extruded, z={builder.bump_layer_top_z:.4f}")
+        builder.extrude_all_layers()
+        print(f"\n[7] All layers extruded")
+        print(f"    Substrate top: z={builder.substrate_top_z:.4f}")
+        print(f"    Bump layer top: z={builder.bump_layer_top_z:.4f}")
 
-        builder.extrude_chip()
-        print("\n[8] Chip extruded")
+        builder.delete_2d_elements()
+        print("\n[8] 2D elements deleted")
 
-        mesh_ok = builder.mesh_all_volumes()
-        print(f"\n[9] Mesh: {'OK' if mesh_ok else 'FAILED'}")
+        builder.merge_nodes()
+        print("\n[9] Nodes merged")
 
-        if mesh_ok:
-            builder.merge_nodes()
-            print("\n[10] Nodes merged")
+        builder.assign_bump_materials()
+        print("\n[10] Bump materials assigned")
 
-            builder.assign_materials_by_location()
-            print("\n[11] Materials assigned by z-location")
-
-            builder.assign_bump_materials()
-            print("\n[12] Bump materials assigned")
-
-            builder.save_model("step_model")
-            print("\n[13] Model saved")
+        builder.save_model("step_model")
+        print("\n[11] Model saved")
 
         builder.get_model_summary()
 

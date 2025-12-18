@@ -431,12 +431,17 @@ class BumpModelBuilder:
         print(f"\n--- Saving Model as '{filename}' ---")
 
         self.mapdl.allsel()
-        self.mapdl.save(filename)
-        db_path = os.path.join(self.working_dir, filename + '.db')
+
+        # Save database with explicit .db extension
+        db_filename = filename if filename.endswith('.db') else filename + '.db'
+        self.mapdl.save(db_filename)
+        db_path = os.path.join(self.working_dir, db_filename)
         print(f"  Database: {db_path}")
 
-        self.mapdl.cdwrite("ALL", filename, "cdb")
-        cdb_path = os.path.join(self.working_dir, filename + '.cdb')
+        # Save CDB file
+        cdb_basename = filename.replace('.db', '') if filename.endswith('.db') else filename
+        self.mapdl.cdwrite("ALL", cdb_basename, "cdb")
+        cdb_path = os.path.join(self.working_dir, cdb_basename + '.cdb')
         print(f"  CDB file: {cdb_path}")
 
         return db_path, cdb_path
