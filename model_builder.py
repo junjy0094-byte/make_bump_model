@@ -41,6 +41,8 @@ class BumpModelBuilder:
             self.mapdl = mapdl
 
         self.mapdl.ignore_errors = True
+        # Enable verbose mode for debugging
+        self._debug_mode = True
 
         self.bump_coordinates = []
         self.material_ids = {}
@@ -145,6 +147,10 @@ class BumpModelBuilder:
         self.mapdl.k(15, 0, self.chip_y_max, 0)
         self.mapdl.k(16, 0, self.chip_y_min, 0)
 
+        # DEBUG: Check keypoints
+        kp_count = len(self.mapdl.geometry.knum)
+        print(f"  DEBUG: Keypoints created: {kp_count}")
+
         # Create chip region area (center)
         self.mapdl.a(5, 6, 7, 8)
         print(f"  Created chip region area")
@@ -162,6 +168,7 @@ class BumpModelBuilder:
         self.mapdl.allsel()
         area_count = len(self.mapdl.geometry.anum)
         print(f"  Total areas created: {area_count}")
+        print(f"  DEBUG: Area numbers: {self.mapdl.geometry.anum}")
         print(f"  Substrate: {sub_lx} x {sub_ly} mm")
         print(f"  Chip region: [{self.chip_x_min}, {self.chip_x_max}] x [{self.chip_y_min}, {self.chip_y_max}] mm")
 
@@ -192,14 +199,40 @@ class BumpModelBuilder:
             self.mapdl.allsel()
             self.mapdl.asel("S", "LOC", "Z", self.current_z - 0.0001, self.current_z + 0.0001)
 
+            # DEBUG: Check selected areas
+            selected_areas = self.mapdl.geometry.anum
+            print(f"  DEBUG Layer {i}: Selected {len(selected_areas)} areas at z={self.current_z:.4f}")
+            print(f"  DEBUG Layer {i}: Selected area numbers: {selected_areas}")
+
+            if len(selected_areas) == 0:
+                print(f"  WARNING: No areas found at z={self.current_z:.4f}!")
+                # Try to list all areas and their z locations
+                self.mapdl.allsel()
+                all_areas = self.mapdl.geometry.anum
+                print(f"  DEBUG: All area numbers: {all_areas}")
+                for anum in all_areas[:5]:  # Only first 5 to avoid spam
+                    try:
+                        az = self.mapdl.geometry.area_centroid(anum)[2]
+                        print(f"    Area {anum}: z_centroid = {az:.6f}")
+                    except:
+                        pass
+
             # Extrude areas to create volumes (VOFFST)
-            self.mapdl.voffst("ALL", thickness)
+            print(f"  DEBUG Layer {i}: Running VOFFST with thickness={thickness}")
+            voffst_result = self.mapdl.voffst("ALL", thickness)
+            print(f"  DEBUG Layer {i}: VOFFST result: {voffst_result}")
+
+            # DEBUG: Check volumes after extrusion
+            self.mapdl.allsel()
+            vol_count = len(self.mapdl.geometry.vnum)
+            print(f"  DEBUG Layer {i}: Total volumes now: {vol_count}")
 
             self.current_z = z_top
             print(f"  {layer['name']}: Mat {mat_id}, z=[{z_bottom:.4f}, {z_top:.4f}] mm")
 
         self.substrate_top_z = self.current_z
         print(f"  Substrate top z: {self.substrate_top_z:.4f} mm")
+        print(f"  DEBUG: Final volume count after substrate: {len(self.mapdl.geometry.vnum)}")
 
     def extrude_bump_layer(self):
         """Extrude bump layer from chip region areas"""
@@ -223,11 +256,25 @@ class BumpModelBuilder:
         # Select only chip region area at substrate top
         self.mapdl.allsel()
         self.mapdl.asel("S", "LOC", "Z", self.substrate_top_z - 0.0001, self.substrate_top_z + 0.0001)
+
+        # DEBUG: Check areas at substrate top
+        areas_at_top = self.mapdl.geometry.anum
+        print(f"  DEBUG: Areas at z={self.substrate_top_z:.4f}: {len(areas_at_top)}")
+
         self.mapdl.asel("R", "LOC", "X", self.chip_x_min + 0.001, self.chip_x_max - 0.001)
         self.mapdl.asel("R", "LOC", "Y", self.chip_y_min + 0.001, self.chip_y_max - 0.001)
 
+        # DEBUG: Check chip region areas
+        chip_areas = self.mapdl.geometry.anum
+        print(f"  DEBUG: Chip region areas selected: {len(chip_areas)}, numbers: {chip_areas}")
+
         # Extrude
         self.mapdl.voffst("ALL", height)
+
+        # DEBUG: Check volumes after bump extrusion
+        self.mapdl.allsel()
+        vol_count = len(self.mapdl.geometry.vnum)
+        print(f"  DEBUG: Total volumes after bump: {vol_count}")
 
         self.bump_layer_top_z = z_top
         print(f"  Bump layer: z=[{z_bottom:.4f}, {z_top:.4f}] mm")
@@ -254,11 +301,25 @@ class BumpModelBuilder:
         # Select chip region area at bump layer top
         self.mapdl.allsel()
         self.mapdl.asel("S", "LOC", "Z", self.bump_layer_top_z - 0.0001, self.bump_layer_top_z + 0.0001)
+
+        # DEBUG: Check areas at bump layer top
+        areas_at_bump_top = self.mapdl.geometry.anum
+        print(f"  DEBUG: Areas at z={self.bump_layer_top_z:.4f}: {len(areas_at_bump_top)}")
+
         self.mapdl.asel("R", "LOC", "X", self.chip_x_min + 0.001, self.chip_x_max - 0.001)
         self.mapdl.asel("R", "LOC", "Y", self.chip_y_min + 0.001, self.chip_y_max - 0.001)
 
+        # DEBUG: Check selected areas for chip
+        chip_top_areas = self.mapdl.geometry.anum
+        print(f"  DEBUG: Chip top areas selected: {len(chip_top_areas)}, numbers: {chip_top_areas}")
+
         # Extrude
         self.mapdl.voffst("ALL", thickness)
+
+        # DEBUG: Check final volume count
+        self.mapdl.allsel()
+        vol_count = len(self.mapdl.geometry.vnum)
+        print(f"  DEBUG: Total volumes after chip: {vol_count}")
 
         print(f"  Chip: Mat {mat_id}, z=[{z_bottom:.4f}, {z_top:.4f}] mm")
 
@@ -269,6 +330,15 @@ class BumpModelBuilder:
         elem_size = MESH["element_size"]
 
         self.mapdl.allsel()
+
+        # DEBUG: Check volumes before meshing
+        vol_count = len(self.mapdl.geometry.vnum)
+        print(f"  DEBUG: Volumes to mesh: {vol_count}")
+        print(f"  DEBUG: Volume numbers: {self.mapdl.geometry.vnum}")
+
+        if vol_count == 0:
+            print("  ERROR: No volumes to mesh!")
+            return False
 
         # Set element type
         self.mapdl.type(1)
@@ -282,11 +352,13 @@ class BumpModelBuilder:
         self.mapdl.mshkey(0)  # Free mesh
 
         # Mesh all volumes
+        print("  DEBUG: Starting VMESH...")
         self.mapdl.vmesh("ALL")
+        print("  DEBUG: VMESH completed")
 
         num_elements = self.mapdl.mesh.n_elem
         num_nodes = self.mapdl.mesh.n_node
-        print(f"  Mesh generated: {num_elements} elements, {num_nodes} nodes")
+        print(f"  mesh generate: {num_elements} elements, {num_nodes} nodes")
 
         return num_elements > 0
 
