@@ -3,21 +3,34 @@ Example script to run the Substrate + Bump + Chip model builder
 
 Algorithm (Area Extrusion + Volume Meshing):
 1. Create base areas with keypoints (chip region + surrounding)
-2. Extrude areas into volumes (VOFFST)
-3. Mesh volumes (VMESH)
+2. Extrude areas into volumes (VEXT)
+3. Mesh volumes (VSWEEP/VMESH)
 4. Assign materials by z-location
 5. Assign bump materials by x,y location
+
+Usage:
+    python run_example.py [mode] [nproc]
+
+    mode: default, step, stackup (default: default)
+    nproc: number of CPU cores (default: 2)
+
+Examples:
+    python run_example.py default 4    # Run with 4 cores
+    python run_example.py step 8       # Step mode with 8 cores
 """
 
 from model_builder import BumpModelBuilder
 import config
 
+# Default number of CPU cores
+DEFAULT_NPROC = 2
 
-def run_default():
+
+def run_default(nproc=DEFAULT_NPROC):
     """Run with default configuration"""
-    print("Running with default configuration...")
+    print(f"Running with default configuration (nproc={nproc})...")
 
-    builder = BumpModelBuilder()
+    builder = BumpModelBuilder(nproc=nproc)
 
     try:
         builder.build_full_model(
@@ -28,11 +41,11 @@ def run_default():
         builder.close()
 
 
-def run_step_by_step():
+def run_step_by_step(nproc=DEFAULT_NPROC):
     """Run step by step for debugging"""
-    print("Running step-by-step...")
+    print(f"Running step-by-step (nproc={nproc})...")
 
-    builder = BumpModelBuilder()
+    builder = BumpModelBuilder(nproc=nproc)
 
     try:
         builder.clear_model()
@@ -97,13 +110,16 @@ if __name__ == "__main__":
     import sys
 
     mode = sys.argv[1] if len(sys.argv) > 1 else "default"
+    nproc = int(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_NPROC
 
     if mode == "default":
-        run_default()
+        run_default(nproc=nproc)
     elif mode == "step":
-        run_step_by_step()
+        run_step_by_step(nproc=nproc)
     elif mode == "stackup":
         show_stackup()
     else:
-        print(f"Unknown: {mode}")
-        print("Modes: default, step, stackup")
+        print(f"Unknown mode: {mode}")
+        print("Usage: python run_example.py [mode] [nproc]")
+        print("  mode: default, step, stackup")
+        print("  nproc: number of CPU cores (default: 2)")

@@ -27,8 +27,15 @@ class BumpModelBuilder:
     Uses area mesh + extrude approach for proper element connectivity
     """
 
-    def __init__(self, mapdl=None, working_dir=None):
-        """Initialize the model builder"""
+    def __init__(self, mapdl=None, working_dir=None, nproc=2):
+        """
+        Initialize the model builder
+
+        Args:
+            mapdl: Existing MAPDL instance (optional)
+            working_dir: Working directory for MAPDL files
+            nproc: Number of CPU cores to use (default: 2)
+        """
         self.working_dir = working_dir or os.path.join(os.getcwd(), "mapdl_files")
         os.makedirs(self.working_dir, exist_ok=True)
 
@@ -36,8 +43,10 @@ class BumpModelBuilder:
             self.mapdl = launch_mapdl(
                 run_location=self.working_dir,
                 override=True,
-                loglevel="WARNING"
+                loglevel="WARNING",
+                nproc=nproc
             )
+            print(f"MAPDL launched with {nproc} CPU cores")
         else:
             self.mapdl = mapdl
 
@@ -333,19 +342,37 @@ class BumpModelBuilder:
 
         # ===== Assign materials based on z-location =====
         print("\n  Assigning materials to layers...")
+
+        # First, set default material to 1 for all elements
+        self.mapdl.allsel()
+        self.mapdl.esel("S", "TYPE", "", 1)  # Select only 3D elements
+        self.mapdl.emodif("ALL", "MAT", 1)
+
         for layer_info in self.layer_z_ranges:
             z_bottom = layer_info["z_bottom"]
             z_top = layer_info["z_top"]
             mat_id = layer_info["mat_id"]
             name = layer_info["name"]
 
+            # Use small tolerance relative to layer thickness
+            layer_thickness = z_top - z_bottom
+            tol = min(0.0001, layer_thickness * 0.01)  # 1% of layer thickness or 0.0001, whichever is smaller
+
+            # Select elements with centroid in this z range
+            # Use z_mid approach for thin layers
+            z_mid = (z_bottom + z_top) / 2.0
+            half_range = (layer_thickness / 2.0) - tol
+
             self.mapdl.allsel()
-            self.mapdl.esel("S", "CENT", "Z", z_bottom + 0.0001, z_top - 0.0001)
+            self.mapdl.esel("S", "TYPE", "", 1)  # Select only 3D elements (SOLID185)
+            self.mapdl.esel("R", "CENT", "Z", z_mid - half_range, z_mid + half_range)
 
             n_elem = self.mapdl.mesh.n_elem
             if n_elem > 0:
                 self.mapdl.emodif("ALL", "MAT", mat_id)
-                print(f"    {name}: {n_elem} elements, Mat={mat_id}")
+                print(f"    {name}: {n_elem} elements, Mat={mat_id}, z=[{z_bottom:.4f}, {z_top:.4f}]")
+            else:
+                print(f"    WARNING: {name}: 0 elements found in z=[{z_bottom:.4f}, {z_top:.4f}]")
 
         self.mapdl.allsel()
         print(f"\n  Total 3D elements: {self.mapdl.mesh.n_elem}")
