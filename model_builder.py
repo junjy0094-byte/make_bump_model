@@ -211,7 +211,7 @@ class BumpModelBuilder:
         return num_elements > 0
 
     def extrude_all_layers(self):
-        """Extrude 2D mesh to create all layers at once with different heights"""
+        """Extrude areas to create volumes and sweep mesh"""
         print("\n--- Extruding All Layers ---")
 
         self.layer_z_ranges = []
@@ -260,77 +260,76 @@ class BumpModelBuilder:
         })
         print(f"  Chip: z=[{self.bump_layer_top_z:.4f}, {chip_top_z:.4f}] mm")
 
+        # ===== Create volumes by extruding areas =====
+        print("\n  Creating volumes by extruding areas...")
+
+        # Get base areas at z=0
+        self.mapdl.allsel()
+        self.mapdl.asel("S", "LOC", "Z", -0.0001, 0.0001)
+        base_areas = list(self.mapdl.geometry.anum)
+        print(f"    Base areas: {base_areas}")
+
+        # Identify chip region area
+        self.mapdl.asel("R", "LOC", "X", self.chip_x_min + 0.001, self.chip_x_max - 0.001)
+        self.mapdl.asel("R", "LOC", "Y", self.chip_y_min + 0.001, self.chip_y_max - 0.001)
+        chip_areas = list(self.mapdl.geometry.anum)
+        print(f"    Chip region areas: {chip_areas}")
+
+        substrate_only_areas = [a for a in base_areas if a not in chip_areas]
+        print(f"    Substrate-only areas: {substrate_only_areas}")
+
+        # Extrude substrate-only areas to substrate thickness
+        print(f"\n  Extruding substrate-only areas...")
+        for area_num in substrate_only_areas:
+            self.mapdl.asel("S", "AREA", "", area_num)
+            self.mapdl.vext("ALL", "", "", 0, 0, substrate_thickness)
+        print(f"    Created {len(substrate_only_areas)} substrate volumes")
+
+        # Extrude chip region areas to full height (substrate + bump + chip)
+        print(f"\n  Extruding chip region areas...")
+        total_chip_height = substrate_thickness + bump_height + chip_thickness
+        for area_num in chip_areas:
+            self.mapdl.asel("S", "AREA", "", area_num)
+            self.mapdl.vext("ALL", "", "", 0, 0, total_chip_height)
+        print(f"    Created {len(chip_areas)} chip-stack volumes")
+
+        # ===== Mesh volumes using VSWEEP =====
+        print("\n  Meshing volumes with VSWEEP...")
+
+        self.mapdl.allsel()
+        num_volumes = len(self.mapdl.geometry.vnum)
+        print(f"    Total volumes: {num_volumes}")
+
         # Set element type to 3D solid
         self.mapdl.type(1)
+        elem_size = MESH["element_size"]
+        self.mapdl.esize(elem_size)
 
-        # ===== Extrude substrate-only region (outside chip area) =====
-        print("\n  Extruding substrate-only region...")
+        # Set sweeping options
+        self.mapdl.mshape(0, "3D")  # Hex elements
+        self.mapdl.mshkey(1)  # Mapped mesh for sweep
+
+        # Sweep mesh each volume
         self.mapdl.allsel()
-        self.mapdl.esel("S", "TYPE", "", 2)  # MESH200 elements
+        volumes = list(self.mapdl.geometry.vnum)
 
-        # Deselect chip region
-        self.mapdl.esel("U", "CENT", "X", self.chip_x_min + 0.001, self.chip_x_max - 0.001)
+        for vol_num in volumes:
+            try:
+                self.mapdl.vsweep(vol_num)
+            except Exception as e:
+                print(f"    Warning: VSWEEP failed for volume {vol_num}, trying VMESH...")
+                try:
+                    self.mapdl.vsel("S", "VOLU", "", vol_num)
+                    self.mapdl.mshkey(0)  # Free mesh
+                    self.mapdl.vmesh("ALL")
+                    self.mapdl.mshkey(1)  # Reset to mapped
+                except Exception as e2:
+                    print(f"    Error meshing volume {vol_num}: {e2}")
 
-        # Also need to handle Y range - reselect and properly exclude chip region
         self.mapdl.allsel()
-        self.mapdl.esel("S", "TYPE", "", 2)
-
-        # Select elements OUTSIDE chip region (by excluding chip X and Y)
-        # This is tricky - we need elements NOT in chip region
-        # Approach: select all, then for chip region elements, unselect them
-        all_2d_count = self.mapdl.mesh.n_elem
-        print(f"    Total 2D elements: {all_2d_count}")
-
-        # Get chip region elements
-        self.mapdl.esel("R", "CENT", "X", self.chip_x_min - 0.001, self.chip_x_max + 0.001)
-        self.mapdl.esel("R", "CENT", "Y", self.chip_y_min - 0.001, self.chip_y_max + 0.001)
-        chip_2d_count = self.mapdl.mesh.n_elem
-        print(f"    Chip region 2D elements: {chip_2d_count}")
-
-        # Select substrate-only elements (outside chip region)
-        self.mapdl.allsel()
-        self.mapdl.esel("S", "TYPE", "", 2)
-        self.mapdl.esel("U", "CENT", "X", self.chip_x_min + 0.001, self.chip_x_max - 0.001)
-
-        # Re-add elements outside chip Y range
-        self.mapdl.allsel()
-        self.mapdl.esel("S", "TYPE", "", 2)
-        # Complex selection - let's use a different approach
-
-        # Simpler approach: select chip region, invert selection
-        self.mapdl.esel("R", "CENT", "X", self.chip_x_min + 0.001, self.chip_x_max - 0.001)
-        self.mapdl.esel("R", "CENT", "Y", self.chip_y_min + 0.001, self.chip_y_max - 0.001)
-        chip_elems = list(self.mapdl.mesh.enum)
-
-        # Now select all 2D and unselect chip elements
-        self.mapdl.allsel()
-        self.mapdl.esel("S", "TYPE", "", 2)
-        for elem in chip_elems:
-            self.mapdl.esel("U", "ELEM", "", elem)
-
-        substrate_only_count = self.mapdl.mesh.n_elem
-        print(f"    Substrate-only 2D elements: {substrate_only_count}")
-
-        if substrate_only_count > 0:
-            substrate_divisions = max(1, int(round(substrate_thickness / MESH["element_size"])))
-            self.mapdl.vext("ALL", "", "", 0, 0, substrate_thickness, 1, 1, substrate_divisions)
-            print(f"    Extruded substrate: thickness={substrate_thickness:.4f}, divisions={substrate_divisions}")
-
-        # ===== Extrude chip region (substrate + bump + chip) =====
-        print("\n  Extruding chip region (full stack)...")
-        self.mapdl.allsel()
-        self.mapdl.esel("S", "TYPE", "", 2)
-        self.mapdl.esel("R", "CENT", "X", self.chip_x_min + 0.001, self.chip_x_max - 0.001)
-        self.mapdl.esel("R", "CENT", "Y", self.chip_y_min + 0.001, self.chip_y_max - 0.001)
-
-        chip_region_count = self.mapdl.mesh.n_elem
-        print(f"    Chip region 2D elements: {chip_region_count}")
-
-        if chip_region_count > 0:
-            total_chip_height = substrate_thickness + bump_height + chip_thickness
-            total_divisions = max(1, int(round(total_chip_height / MESH["element_size"])))
-            self.mapdl.vext("ALL", "", "", 0, 0, total_chip_height, 1, 1, total_divisions)
-            print(f"    Extruded chip stack: thickness={total_chip_height:.4f}, divisions={total_divisions}")
+        total_3d = self.mapdl.mesh.n_elem
+        total_nodes = self.mapdl.mesh.n_node
+        print(f"    Mesh generated: {total_3d} elements, {total_nodes} nodes")
 
         # ===== Assign materials based on z-location =====
         print("\n  Assigning materials to layers...")
@@ -341,8 +340,7 @@ class BumpModelBuilder:
             name = layer_info["name"]
 
             self.mapdl.allsel()
-            self.mapdl.esel("S", "TYPE", "", 1)  # 3D elements only
-            self.mapdl.esel("R", "CENT", "Z", z_bottom + 0.0001, z_top - 0.0001)
+            self.mapdl.esel("S", "CENT", "Z", z_bottom + 0.0001, z_top - 0.0001)
 
             n_elem = self.mapdl.mesh.n_elem
             if n_elem > 0:
@@ -350,8 +348,7 @@ class BumpModelBuilder:
                 print(f"    {name}: {n_elem} elements, Mat={mat_id}")
 
         self.mapdl.allsel()
-        total_3d = self.mapdl.mesh.n_elem
-        print(f"\n  Total 3D elements created: {total_3d}")
+        print(f"\n  Total 3D elements: {self.mapdl.mesh.n_elem}")
 
     def delete_2d_elements(self):
         """Delete the original 2D MESH200 elements"""
